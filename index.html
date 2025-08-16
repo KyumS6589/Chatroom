@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chatroom — Frontend</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#60a5fa}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    body{background:linear-gradient(180deg,#071029 0%, #0b1220 100%);color:#e6eef8;display:flex;align-items:stretch}
+    .app{max-width:1100px;margin:auto;display:grid;grid-template-columns:320px 1fr;gap:18px;padding:20px;width:100%}
+    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    h2{margin:6px 0 12px;font-size:16px}
+
+    /* Sidebar */
+    .sidebar{display:flex;flex-direction:column;height:calc(100vh - 80px)}
+    .userbox{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+    .avatar{width:42px;height:42px;border-radius:8px;background:#0f1724;display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:700}
+    .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:inherit;cursor:pointer}
+    .btn.primary{background:var(--accent);color:#08203a;border:0}
+    .rooms{overflow:auto;flex:1;margin-top:8px}
+    .room{padding:10px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+    .room:hover{background:rgba(255,255,255,0.02)}
+    .room.active{background:rgba(96,165,250,0.12)}
+
+    /* Main */
+    .main{display:flex;flex-direction:column;height:calc(100vh - 80px)}
+    .room-header{display:flex;justify-content:space-between;align-items:center}
+    .messages{flex:1;overflow:auto;padding:12px;margin-top:12px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00))}
+    .msg{margin-bottom:12px}
+    .msg .meta{font-size:12px;color:var(--muted)}
+    .composer{display:flex;gap:8px;padding:12px;border-top:1px solid rgba(255,255,255,0.02)}
+    .composer textarea{flex:1;resize:none;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .small{font-size:13px;color:var(--muted)}
+
+    /* Forms */
+    .form-row{display:flex;gap:8px;margin-bottom:8px}
+    input[type=text],input[type=password]{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .muted{color:var(--muted)}
+
+    @media(max-width:900px){.app{grid-template-columns:1fr}.sidebar{height:auto}.main{height:auto}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel sidebar" id="sidebar">
+      <div class="userbox" id="userbox">
+        <div class="avatar" id="avatar">?</div>
+        <div style="flex:1">
+          <div id="username" class="small muted">Not signed in</div>
+          <div class="small muted">Use signup / login below</div>
+        </div>
+        <div>
+          <button class="btn" id="btn-logout" style="display:none">Logout</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="room-name" type="text" placeholder="New room name" />
+        <button class="btn primary" id="btn-create-room">Create</button>
+      </div>
+
+      <h2>Rooms</h2>
+      <div class="rooms" id="rooms"></div>
+
+      <hr style="opacity:0.06;margin:12px 0">
+
+      <div>
+        <h2>Auth</h2>
+        <div class="form-row">
+          <input id="auth-username" type="text" placeholder="username" />
+        </div>
+        <div class="form-row">
+          <input id="auth-password" type="password" placeholder="password" />
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="btn-login">Login</button>
+          <button class="btn" id="btn-signup">Sign up</button>
+        </div>
+        <div class="small muted" style="margin-top:8px">Tip: username needs 3–30 alphanumeric chars, password 6+ chars</div>
+      </div>
+    </div>
+
+    <div class="panel main">
+      <div class="room-header">
+        <div>
+          <h2 id="room-title">Select a room</h2>
+          <div class="small muted" id="room-meta"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn" id="btn-join" style="display:none">Join</button>
+          <button class="btn" id="btn-leave" style="display:none">Leave</button>
+        </div>
+      </div>
+
+      <div class="messages" id="messages"></div>
+
+      <div class="composer" id="composer" style="display:none">
+        <textarea id="msg-input" rows="2" placeholder="Write a message..."></textarea>
+        <div style="display:flex;flex-direction:column">
+          <button class="btn primary" id="btn-send">Send</button>
+          <div class="small muted" style="margin-top:8px">Polling updates every 3s</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Single-file frontend for the REST API created earlier.
+    // If your API runs on a different origin, set API_BASE accordingly and enable CORS on the server.
+    const API_BASE = localStorage.getItem('api_base') || (location.protocol + '//' + location.hostname + (location.port ? ':' + location.port : '') + '/api');
+
+    // State
+    let token = localStorage.getItem('chat_token');
+    let user = JSON.parse(localStorage.getItem('chat_user') || 'null');
+    let rooms = [];
+    let activeRoom = null;
+    let pollTimer = null;
+
+    // Elements
+    const avatarEl = document.getElementById('avatar');
+    const usernameEl = document.getElementById('username');
+    const btnLogout = document.getElementById('btn-logout');
+    const roomsEl = document.getElementById('rooms');
+    const roomTitle = document.getElementById('room-title');
+    const roomMeta = document.getElementById('room-meta');
+    const btnJoin = document.getElementById('btn-join');
+    const btnLeave = document.getElementById('btn-leave');
+    const messagesEl = document.getElementById('messages');
+    const composerEl = document.getElementById('composer');
+    const msgInput = document.getElementById('msg-input');
+
+    function apiFetch(path, opts={}){
+      const headers = opts.headers || {};
+      headers['Content-Type'] = 'application/json';
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return fetch(API_BASE + path, {...opts, headers}).then(async r => {
+        const text = await r.text();
+        try{ const json = JSON.parse(text); if (!r.ok) throw {status:r.status, body:json}; return json; }catch(e){ if (text) return JSON.parse(text); return {}; }
+      });
+    }
+
+    function updateAuthUI(){
+      if (user){
+        avatarEl.textContent = user.username[0].toUpperCase();
+        usernameEl.textContent = user.username;
+        btnLogout.style.display = 'inline-block';
+      } else {
+        avatarEl.textContent = '?';
+        usernameEl.textContent = 'Not signed in';
+        btnLogout.style.display = 'none';
+      }
+    }
+
+    async function loadRooms(){
+      try{
+        const res = await apiFetch('/rooms?limit=50');
+        rooms = res.rooms || [];
+        renderRooms();
+      }catch(e){ console.error('loadRooms', e); roomsEl.innerHTML = '<div class="small muted">Could not load rooms (make sure API is running and CORS is enabled)</div>'; }
+    }
+
+    function renderRooms(){
+      roomsEl.innerHTML = '';
+      rooms.forEach(r => {
+        const div = document.createElement('div');
+        div.className = 'room' + (activeRoom && activeRoom.id === r.id ? ' active' : '');
+        div.innerHTML = `<div><strong>${escapeHtml(r.name)}</strong><div class='small muted'>${r.public? 'Public':'Private'}</div></div>`;
+        div.onclick = () => selectRoom(r);
+        roomsEl.appendChild(div);
+      });
+    }
+
+    function selectRoom(r){
+      activeRoom = r;
+      roomTitle.textContent = r.name;
+      roomMeta.textContent = `ID: ${r.id} • Created by: ${r.created_by || 'unknown'}`;
+      renderRooms();
+      refreshMembershipUI();
+      loadMessages();
+      composerEl.style.display = 'block';
+      startPolling();
+    }
+
+    function refreshMembershipUI(){
+      // We don't have API to list members; try a lightweight check: try to post a harmless message? instead we rely on join/leave endpoints and attempt to join automatically when user presses join.
+      btnJoin.style.display = 'none'; btnLeave.style.display='none';
+      if (!user) { composerEl.style.display='none'; return; }
+      // If room is public, show composer immediately
+      if (activeRoom.public){ btnJoin.style.display='none'; btnLeave.style.display='none'; composerEl.style.display='block'; }
+      else { btnJoin.style.display='inline-block'; btnLeave.style.display='inline-block'; composerEl.style.display='none'; }
+    }
+
+    async function loadMessages(){
+      if (!activeRoom) return;
+      try{
+        const res = await apiFetch(`/rooms/${activeRoom.id}/messages?limit=100`);
+        const msgs = res.messages || [];
+        messagesEl.innerHTML = '';
+        msgs.reverse().forEach(m => {
+          const el = document.createElement('div');
+          el.className = 'msg';
+          el.innerHTML = `<div style="font-weight:600">${escapeHtml(m.username)}</div><div class='meta'>${escapeHtml(m.created_at || '')}</div><div style="margin-top:6px">${escapeHtml(m.content)}</div>`;
+          messagesEl.appendChild(el);
+        });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }catch(e){ console.error('loadMessages', e); messagesEl.innerHTML = '<div class="small muted">Could not load messages</div>'; }
+    }
+
+    async function sendMessage(){
+      const txt = msgInput.value.trim(); if (!txt) return; if (!activeRoom) return;
+      try{
+        await apiFetch(`/rooms/${activeRoom.id}/messages`, { method:'POST', body: JSON.stringify({ content: txt }) });
+        msgInput.value = '';
+        await loadMessages();
+      }catch(e){ console.error('sendMessage', e); alert('Send failed: ' + (e.body && e.body.error ? e.body.error : 'unknown')); }
+    }
+
+    function startPolling(){
+      stopPolling();
+      pollTimer = setInterval(() => { loadMessages(); }, 3000);
+    }
+    function stopPolling(){ if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+
+    async function doLogin(){
+      const u = document.getElementById('auth-username').value.trim();
+      const p = document.getElementById('auth-password').value;
+      if (!u||!p) return alert('username & password required');
+      try{ const res = await apiFetch('/auth/login', { method:'POST', body: JSON.stringify({ username:u, password:p }) });
+        token = res.token; user = res.user; localStorage.setItem('chat_token', token); localStorage.setItem('chat_user', JSON.stringify(user)); updateAuthUI(); await loadRooms();
+      }catch(e){ console.error(e); alert('Login failed'); }
+    }
+
+    async function doSignup(){
+      const u = document.getElementById('auth-username').value.trim();
+      const p = document.getElementById('auth-password').value;
+      if (!u||!p) return alert('username & password required');
+      try{ const res = await apiFetch('/auth/signup', { method:'POST', body: JSON.stringify({ username:u, password:p }) });
+        token = res.token; user = res.user; localStorage.setItem('chat_token', token); localStorage.setItem('chat_user', JSON.stringify(user)); updateAuthUI(); await loadRooms();
+      }catch(e){ console.error(e); alert('Signup failed: ' + (e.body && e.body.error ? e.body.error : 'unknown')); }
+    }
+
+    function doLogout(){ token=null; user=null; localStorage.removeItem('chat_token'); localStorage.removeItem('chat_user'); updateAuthUI(); }
+
+    async function createRoom(){
+      const name = document.getElementById('room-name').value.trim(); if(!name) return alert('room name required');
+      try{ const res = await apiFetch('/rooms', { method:'POST', body: JSON.stringify({ name }) });
+        document.getElementById('room-name').value=''; await loadRooms();
+      }catch(e){ console.error(e); alert('Create room failed'); }
+    }
+
+    async function joinRoom(){ if (!activeRoom) return; try{ await apiFetch(`/rooms/${activeRoom.id}/join`, { method:'POST' }); alert('Joined'); composerEl.style.display='block'; }catch(e){ console.error(e); alert('Join failed'); } }
+    async function leaveRoom(){ if (!activeRoom) return; try{ await apiFetch(`/rooms/${activeRoom.id}/leave`, { method:'POST' }); alert('Left'); composerEl.style.display='none'; }catch(e){ console.error(e); alert('Leave failed'); } }
+
+    // Helpers
+    function escapeHtml(s){ if (!s && s!==0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // Wire up
+    document.getElementById('btn-login').onclick = doLogin;
+    document.getElementById('btn-signup').onclick = doSignup;
+    btnLogout.onclick = () => { doLogout(); };
+    document.getElementById('btn-create-room').onclick = createRoom;
+    document.getElementById('btn-send').onclick = sendMessage;
+    msgInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
+    btnJoin.onclick = joinRoom; btnLeave.onclick = leaveRoom;
+
+    // Init
+    updateAuthUI(); loadRooms();
+
+    // If running from a different origin than the API you must enable CORS on the server:
+    // For the Node/Express server add: app.use(require('cors')()); or configure allowed origins.
+  </script>
+</body>
+</html>
